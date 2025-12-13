@@ -1,44 +1,39 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from database import SessionLocal
-from models import User
-from security import hash_password, verify_password, create_access_token
+from Backend.models import User
+from Backend.database import get_db
+from Backend.security import hash_password, verify_password, create_access_token
 
-router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+# Pydantic models for request bodies
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
 
-# Database dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
+auth_router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 # REGISTER
-@router.post("/register")
-def register(name: str, email: str, password: str, db: Session = Depends(get_db)):
+@auth_router.post("/register")
+def register(req: RegisterRequest, db: Session = Depends(get_db)):
+    if len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
-    if len(password) < 6:
-        raise HTTPException(
-            status_code=400,
-            detail="Password must be at least 6 characters"
-        )
+    if len(req.password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password is too long (maximum 72 characters allowed)")
 
-    if len(password.encode("utf-8")) > 72:
-        raise HTTPException(
-            status_code=400,
-            detail="Password is too long (maximum 72 characters allowed)"
-        )
-
-    existing_user = db.query(User).filter(User.email == email).first()
+    existing_user = db.query(User).filter(User.email == req.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     new_user = User(
-        name=name,
-        email=email,
-        password=hash_password(password)
+        name=req.name,
+        email=req.email,
+        password=hash_password(req.password)
     )
 
     db.add(new_user)
@@ -48,13 +43,13 @@ def register(name: str, email: str, password: str, db: Session = Depends(get_db)
     return {"message": "User registered successfully"}
 
 # LOGIN
-@router.post("/login")
-def login(email: str, password: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email).first()
+@auth_router.post("/login")
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not verify_password(password, user.password):
+    if not verify_password(req.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_access_token({
